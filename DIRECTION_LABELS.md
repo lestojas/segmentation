@@ -59,19 +59,31 @@ available). Because the crop comes from the same photo (same camera,
 lighting, material) as a real annotated crack image, it's a genuine
 negative example, not a synthetic or out-of-domain one.
 
-~15% of each split's image count was added this way as zero-annotation
+~15% of the train/valid image count was added this way as zero-annotation
 COCO image entries (`<original_stem>_negcrop.jpg`), tagged
 `direction: "None"` / `direction_source: "negative"` in the COCO json,
 and excluded from `_direction_labels.csv` (a crack-free image has no
 direction to classify). Everything else about the existing images and
 annotations is untouched.
 
+The **test** split is treated differently: it is rebalanced to exact
+**parity** between crack and crack-free images (89 vs. 89) so that
+crack-vs-no-crack detection can be evaluated with a meaningful confusion
+matrix (TP/FP/FN/TN), rather than the near-degenerate ~87/13 split
+produced by the ~15% rule used for train/valid. Reaching parity required
+some source images to contribute a second, non-overlapping crack-free
+crop (`<original_stem>_negcrop2.jpg`) in addition to their first. The
+test split is regenerated from a clean slate on every run of
+`scripts/generate_negative_images.py` (so it's reproducible from one
+deterministic pass, not accumulated across reruns); train/valid are left
+untouched.
+
 | Split | Original images | Negative crops added | Total |
 |---|---|---|---|
 | train | 607 | 91 | 698 |
 | valid | 174 | 26 | 200 |
-| test | 89 | 13 | 102 |
-| **all** | **870** | **130** | **1000** |
+| test | 89 | 89 (parity) | 178 |
+| **all** | **870** | **206** | **1076** |
 
 ## Where the labels live
 

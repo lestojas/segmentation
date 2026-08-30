@@ -2,25 +2,37 @@
 """
 Generate genuine crack-free "negative" images from this dataset, so that
 crack-vs-no-crack detection can be evaluated with a real confusion matrix
-(TP/FP/FN/TN) instead of a near-degenerate one (this dataset currently has
-essentially zero true negatives).
+(TP/FP/FN/TN) instead of a near-degenerate one.
 
 Method
 ------
 For every image that already has crack annotations, compute the union
 bounding box of all its crack polygons, then look at the four rectangular
 strips of the image lying outside that bbox (left / right / top / bottom).
-If the largest such strip is at least MIN_CROP x MIN_CROP, crop a random
-square sub-region from it (size clamped to [MIN_CROP, MAX_CROP]) -- this
-is a region of the *same* image (same camera, lighting, material texture)
-that is guaranteed not to overlap any annotated crack pixel, so it's a
+For each strip that is at least MIN_CROP x MIN_CROP, a random square
+sub-region can be cropped from it (size clamped to [MIN_CROP, MAX_CROP]) --
+this is a region of the *same* image (same camera, lighting, material
+texture) guaranteed not to overlap any annotated crack pixel, so it's a
 genuine, real, in-domain negative example, not a synthetic/external one.
+Up to `max_crops_per_image` non-overlapping crops can be taken from a
+single source image when it has room for more than one.
 
-A random subset of eligible candidates (~15% of each split's current
-image count) is selected per split, cropped, and saved as new image files
-alongside the originals, then added to that split's COCO json as
-zero-annotation image entries (COCO's native way of representing a
-background/negative image for detection training).
+Per-split behavior (see SPLIT_CONFIG)
+--------------------------------------
+train/valid: left completely untouched -- these already have their
+negatives from an earlier run (~15% of split size, one crop per image)
+and this script does not regenerate or add to them.
+
+test: regenerated from a clean slate every run (any previously-generated
+negatives are removed first, so the result is reproducible from one
+deterministic pass rather than accumulating across reruns), targeting
+*parity* with the split's cracked-image count -- i.e. as close to a
+50/50 crack vs. crack-free test set as real, non-overlapping crops allow.
+Single-crop candidates (one per source image) are exhausted before any
+image contributes a second crop, to keep the negatives as diverse
+(different source photos) as possible. The achieved count is printed --
+exact parity is not always reachable from real crops without relaxing
+crop-size/quality constraints, and this script does not do that silently.
 """
 import json
 import os
@@ -28,11 +40,13 @@ import random
 
 from PIL import Image
 
-SPLITS = ["train", "valid", "test"]
 MIN_CROP = 80
 MAX_CROP = 180
-NEGATIVE_FRACTION = 0.15  # ~15% of each split's existing image count
 SEED = 0
+
+SPLIT_CONFIG = {
+    "test": {"target_mode": "parity", "max_crops_per_image": 2, "regenerate": True},
+}
 
 
 def union_bbox(anns):
@@ -43,18 +57,105 @@ def union_bbox(anns):
     return x0, y0, x1, y1
 
 
-def best_free_strip(w, h, bbox):
+def free_strips(w, h, bbox):
+    """All rectangular strips outside the crack bbox that are >= MIN_CROP in
+    both dimensions, largest-area first."""
     x0, y0, x1, y1 = bbox
     candidates = [
-        ("left", 0, 0, x0, h),
-        ("right", x1, 0, w - x1, h),
-        ("top", 0, 0, w, y0),
-        ("bottom", 0, y1, w, h - y1),
+        (0, 0, x0, h),
+        (x1, 0, w - x1, h),
+        (0, 0, w, y0),
+        (0, y1, w, h - y1),
     ]
-    feasible = [c for c in candidates if c[3] >= MIN_CROP and c[4] >= MIN_CROP]
-    if not feasible:
-        return None
-    return max(feasible, key=lambda c: c[3] * c[4])
+    feasible = [c for c in candidates if c[2] >= MIN_CROP and c[3] >= MIN_CROP]
+    feasible.sort(key=lambda c: c[2] * c[3], reverse=True)
+    return feasible
+
+
+def boxes_overlap(a, b):
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    return ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1
+
+
+def crop_box_from_strip(sx, sy, sw, sh, rng):
+    sx, sy, sw, sh = int(sx), int(sy), int(sw), int(sh)
+    crop_size = max(MIN_CROP, min(MAX_CROP, sw, sh))
+    max_x = sx + sw - crop_size
+    max_y = sy + sh - crop_size
+    cx = rng.randint(sx, max_x) if max_x > sx else sx
+    cy = rng.randint(sy, max_y) if max_y > sy else sy
+    return (cx, cy, cx + crop_size, cy + crop_size)
+
+
+def clear_existing_negatives(split, coco):
+    """Remove any previously-generated negative-image entries (and their files)
+    for this split, so regeneration starts from a clean, reproducible slate."""
+    kept, removed = [], 0
+    for im in coco["images"]:
+        if im.get("direction") == "None":
+            path = os.path.join(split, im["file_name"])
+            if os.path.exists(path):
+                os.remove(path)
+            removed += 1
+            continue
+        kept.append(im)
+    coco["images"] = kept
+    return removed
+
+
+def build_candidate_crops(cracked_images, anns_by_image, max_crops_per_image, rng):
+    """One list of (image, box) per crop 'slot' -- all first-crops (one per
+    eligible image) before any second-crops, so single-image diversity is
+    exhausted before any image contributes twice."""
+    slots = [[] for _ in range(max_crops_per_image)]
+    for im in cracked_images:
+        w, h = im["width"], im["height"]
+        strips = free_strips(w, h, union_bbox(anns_by_image[im["id"]]))
+        taken = []
+        for strip in strips:
+            if len(taken) >= max_crops_per_image:
+                break
+            box = crop_box_from_strip(*strip, rng)
+            if any(boxes_overlap(box, t) for t in taken):
+                continue
+            taken.append(box)
+            slots[len(taken) - 1].append((im, box))
+
+    ordered = []
+    for slot in slots:
+        rng.shuffle(slot)
+        ordered.extend(slot)
+    return ordered
+
+
+def save_negative(split, im, box, next_id, rng):
+    cx0, cy0, cx1, cy1 = box
+    src_path = os.path.join(split, im["file_name"])
+    stem, ext = os.path.splitext(im["file_name"])
+    neg_name = f"{stem}_negcrop{ext}"
+    dst_path = os.path.join(split, neg_name)
+    n = 2
+    while os.path.exists(dst_path):
+        neg_name = f"{stem}_negcrop{n}{ext}"
+        dst_path = os.path.join(split, neg_name)
+        n += 1
+
+    with Image.open(src_path) as img:
+        crop = img.crop(box)
+        crop.save(dst_path)
+        actual_w, actual_h = crop.size
+
+    return {
+        "id": next_id,
+        "license": im.get("license", 1),
+        "file_name": neg_name,
+        "height": actual_h,
+        "width": actual_w,
+        "date_captured": im.get("date_captured", ""),
+        "extra": {"name": neg_name, "source_image": im["file_name"],
+                  "note": "cropped from a crack-free region of the source image; no crack present"},
+    }
 
 
 def process_split(split, rng):
@@ -62,68 +163,49 @@ def process_split(split, rng):
     with open(coco_path) as f:
         coco = json.load(f)
 
+    cfg = SPLIT_CONFIG.get(split)
+    if cfg is None:
+        n_negs = sum(1 for im in coco["images"] if im.get("direction") == "None")
+        print(f"{split}: left untouched ({len(coco['images'])} images, {n_negs} existing negatives)")
+        return
+
+    if cfg.get("regenerate"):
+        removed = clear_existing_negatives(split, coco)
+        print(f"{split}: cleared {removed} previously-generated negative(s) before regenerating")
+
     anns_by_image = {}
     for a in coco["annotations"]:
         anns_by_image.setdefault(a["image_id"], []).append(a)
+    cracked_images = [im for im in coco["images"] if anns_by_image.get(im["id"])]
 
-    candidates = []
-    for im in coco["images"]:
-        anns = anns_by_image.get(im["id"], [])
-        if not anns:
-            continue
-        strip = best_free_strip(im["width"], im["height"], union_bbox(anns))
-        if strip is not None:
-            candidates.append((im, strip))
+    candidates = build_candidate_crops(
+        cracked_images, anns_by_image, cfg.get("max_crops_per_image", 1), rng)
 
-    target = max(1, round(NEGATIVE_FRACTION * len(coco["images"])))
-    target = min(target, len(candidates))
-    chosen = rng.sample(candidates, target)
+    if cfg["target_mode"] == "parity":
+        target = len(cracked_images)
+    else:
+        target = max(1, round(cfg.get("fraction", 0.15) * len(coco["images"])))
+    chosen = candidates[:target]
 
-    next_id = max(im["id"] for im in coco["images"]) + 1
+    next_id = (max((im["id"] for im in coco["images"]), default=-1)) + 1
     new_images = []
-    for im, (_, sx, sy, sw, sh) in chosen:
-        sx, sy, sw, sh = int(sx), int(sy), int(sw), int(sh)
-        crop_size = max(MIN_CROP, min(MAX_CROP, sw, sh))
-        max_x = sx + sw - crop_size
-        max_y = sy + sh - crop_size
-        cx = rng.randint(sx, max_x) if max_x > sx else sx
-        cy = rng.randint(sy, max_y) if max_y > sy else sy
-
-        src_path = os.path.join(split, im["file_name"])
-        stem, ext = os.path.splitext(im["file_name"])
-        neg_name = f"{stem}_negcrop{ext}"
-        dst_path = os.path.join(split, neg_name)
-
-        with Image.open(src_path) as img:
-            crop = img.crop((cx, cy, cx + crop_size, cy + crop_size))
-            crop.save(dst_path)
-            actual_w, actual_h = crop.size  # ground truth for the saved file, not the requested size
-
-        new_images.append({
-            "id": next_id,
-            "license": im.get("license", 1),
-            "file_name": neg_name,
-            "height": actual_h,
-            "width": actual_w,
-            "date_captured": im.get("date_captured", ""),
-            "extra": {"name": neg_name, "source_image": im["file_name"],
-                      "note": "cropped from a crack-free region of the source image; no crack present"},
-        })
+    for im, box in chosen:
+        new_images.append(save_negative(split, im, box, next_id, rng))
         next_id += 1
 
     coco["images"].extend(new_images)
     with open(coco_path, "w") as f:
         json.dump(coco, f)
 
-    return len(coco["images"]) - len(new_images), len(new_images)
+    print(f"{split}: {len(cracked_images)} cracked images, target {target} negatives "
+          f"(parity) -> achieved {len(new_images)} "
+          f"({'exact parity' if len(new_images) == len(cracked_images) else 'short of exact parity -- see docstring'})")
 
 
 def main():
     rng = random.Random(SEED)
-    for split in SPLITS:
-        n_before, n_added = process_split(split, rng)
-        print(f"{split}: {n_before} original images -> +{n_added} negative crops "
-              f"-> {n_before + n_added} total")
+    for split in ["train", "valid", "test"]:
+        process_split(split, rng)
 
 
 if __name__ == "__main__":
