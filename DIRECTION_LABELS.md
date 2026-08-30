@@ -37,25 +37,57 @@ lowest-elongation-ratio images in the dataset are genuinely branching/blob
 cracks rather than simple curved single-direction ones.
 
 One image (`CRACK500_20160222_165218_641_721_jpg.rf.RAlbl8Jrf3mXEB8YGlQf.jpg`,
-in `train/`) has no COCO annotation at all, so PCA could not be computed for
-it; it was hand-labeled by direct visual inspection instead.
+in `train/`) has no COCO annotation despite actually containing a crack, so
+PCA could not be computed for it; it was hand-labeled by direct visual
+inspection instead.
 
 See `scripts/classify_crack_direction.py` for the full implementation — run
 it from the repo root (`python3 scripts/classify_crack_direction.py`) to
 regenerate the labels if the segmentation annotations ever change.
 
+## Crack-free negative images
+
+The dataset as originally exported had (with one exception) no genuine
+crack-free images, which makes "crack vs. no-crack" detection accuracy
+impossible to evaluate meaningfully (nothing to compute a true-negative
+rate or specificity from). `scripts/generate_negative_images.py` fixes
+this by cropping a real, in-domain negative from every image that has
+enough crack-free space: it finds the largest rectangular strip of the
+image lying entirely outside the union of that image's crack polygons,
+and crops a random square sub-region from it (80–180px, clamped to what's
+available). Because the crop comes from the same photo (same camera,
+lighting, material) as a real annotated crack image, it's a genuine
+negative example, not a synthetic or out-of-domain one.
+
+~15% of each split's image count was added this way as zero-annotation
+COCO image entries (`<original_stem>_negcrop.jpg`), tagged
+`direction: "None"` / `direction_source: "negative"` in the COCO json,
+and excluded from `_direction_labels.csv` (a crack-free image has no
+direction to classify). Everything else about the existing images and
+annotations is untouched.
+
+| Split | Original images | Negative crops added | Total |
+|---|---|---|---|
+| train | 607 | 91 | 698 |
+| valid | 174 | 26 | 200 |
+| test | 89 | 13 | 102 |
+| **all** | **870** | **130** | **1000** |
+
 ## Where the labels live
 
 - `<split>/_annotations.coco.json`: each entry in `images[]` gained
   `direction`, `direction_diagonal_type`, `direction_angle_deg`,
-  `direction_elongation_ratio`, and `direction_source` (`"pca"` or
-  `"manual"`) fields. Nothing else in the COCO file was changed, so
-  existing segmentation training pipelines keep working unmodified.
+  `direction_elongation_ratio`, and `direction_source` (`"pca"`,
+  `"manual"`, or `"negative"`) fields. Nothing else in the COCO file was
+  changed, so existing segmentation training pipelines keep working
+  unmodified — negative images simply carry no annotations, which is
+  COCO's native way of representing a background/negative example.
 - `<split>/_direction_labels.csv`: a flat `file_name → direction` table
   (plus the angle/ratio/source metadata) for a classification dataloader
-  that doesn't need to parse COCO.
+  that doesn't need to parse COCO. Only crack-containing images appear
+  here.
 
-## Class distribution
+## Class distribution (crack-containing images only)
 
 | Split | Horizontal | Vertical | Diagonal | Mixed | Total |
 |---|---|---|---|---|---|

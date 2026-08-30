@@ -43,9 +43,15 @@ Classification rule
            top-right)
 
 One image in train/ (CRACK500_20160222_165218_641_721...) carries zero
-annotations in the source dataset (no polygon at all), so PCA cannot be
-computed. It was inspected visually and hand-labeled (see
-MANUAL_OVERRIDES below); every other image's label comes from the
+annotations despite actually containing a crack (no polygon at all), so
+PCA cannot be computed. It was inspected visually and hand-labeled (see
+MANUAL_OVERRIDES below).
+
+Every other zero-annotation image is a genuine crack-free negative (see
+scripts/generate_negative_images.py) -- those get direction "None" and
+are excluded from _direction_labels.csv (there's no direction to classify
+when there's no crack), but are still tagged in the COCO json for
+clarity. Every image with at least one annotation gets its label from the
 deterministic PCA rule above.
 
 Outputs (written next to each split's _annotations.coco.json)
@@ -149,10 +155,17 @@ def process_split(split):
     rows = []
     for img in coco["images"]:
         override = MANUAL_OVERRIDES.get(img["file_name"])
+        n_ann = len(anns_by_image.get(img["id"], []))
         if override is not None:
             label, sub, note = override
             angle = ratio = None
             source = "manual"
+        elif n_ann == 0:
+            # genuine crack-free negative image (see generate_negative_images.py) --
+            # no crack, so no direction to compute or classify.
+            label, sub, angle, ratio = "None", None, None, None
+            note = "no crack present in this image (background/negative sample)"
+            source = "negative"
         else:
             pts = polygon_points(anns_by_image, img["id"])
             angle, ratio, vx, vy = pca_direction(pts)
@@ -166,6 +179,9 @@ def process_split(split):
         img["direction_elongation_ratio"] = round(ratio, 3) if ratio is not None else None
         img["direction_source"] = source
 
+        if source == "negative":
+            continue  # excluded from _direction_labels.csv -- there's no direction to classify
+
         rows.append({
             "file_name": img["file_name"],
             "image_id": img["id"],
@@ -173,7 +189,7 @@ def process_split(split):
             "diagonal_type": sub or "",
             "angle_deg": img["direction_angle_deg"],
             "elongation_ratio": img["direction_elongation_ratio"],
-            "num_annotations": len(anns_by_image.get(img["id"], [])),
+            "num_annotations": n_ann,
             "source": source,
             "note": note or "",
         })
