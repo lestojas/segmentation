@@ -16,25 +16,63 @@ classification task:
 Rather than guessing from a visual pass (many of these crack images are
 very low-contrast hairline cracks on noisy asphalt/concrete texture, which
 makes manual labeling unreliable), each label is computed deterministically
-from the existing ground-truth segmentation polygons:
+from the existing ground-truth segmentation polygons — **per fragment**,
+not by pooling every vertex from every annotation into one point cloud.
 
-1. For each image, every segmentation polygon vertex from every annotation
-   belonging to it is pooled into one point cloud (a single crack is often
-   split across several polygon fragments/annotations).
-2. PCA (eigen-decomposition of the point covariance matrix) gives a
-   principal-axis angle (0°/180° = horizontal, 90° = vertical) and an
-   elongation ratio (`largest eigenvalue / smallest eigenvalue`) describing
-   how line-like vs. blob/network-like the crack's spatial spread is.
+1. For every annotation belonging to an image, PCA (eigen-decomposition of
+   that annotation's own vertex covariance matrix) gives a principal-axis
+   angle (0°/180° = horizontal, 90° = vertical) for that one crack
+   fragment, weighted by its bounding-box diagonal (a proxy for its
+   physical length).
+2. Fragment angles are combined with a weighted **circular mean** (angles
+   doubled to handle the 180° wraparound, averaged as unit vectors, then
+   halved back — the standard technique for averaging orientations). The
+   resultant vector's normalized length ("agreement", 0–1) measures how
+   closely the fragments agree: 1.0 = perfectly aligned, and for two
+   equal-weight fragments, 0.5 corresponds to a 60° split between them.
 3. Classification rule:
-   - `elongation_ratio < 1.8` → `Mixed`
-   - else, by principal angle: `[0°,22.5°) ∪ [157.5°,180°)` → `Horizontal`,
-     `[67.5°,112.5°)` → `Vertical`, otherwise → `Diagonal`.
+   - `fragment_agreement < 0.5` → `Mixed` (the crack's fragments disagree
+     by 60°+ — a bent or branching crack with no single dominant axis)
+   - `elongation_ratio < 1.8` (pooled, whole-crack) → `Mixed` (blob/map/
+     alligator cracking, no dominant axis regardless of fragment count)
+   - else, by the combined principal angle: `[0°,22.5°) ∪ [157.5°,180°)` →
+     `Horizontal`, `[67.5°,112.5°)` → `Vertical`, otherwise → `Diagonal`.
+
+For a single-annotation image this is identical to running PCA once over
+that annotation's own points.
+
+### Why not just pool every vertex into one PCA (v1 bug)
+
+The first version of this script pooled all vertices from all of an
+image's annotations into a single point cloud before running PCA. That
+conflates two different things: **the orientation of each crack
+fragment** and **the spatial layout of the fragments relative to each
+other in the frame**. Two concrete, confirmed failures this caused:
+
+- Three separate hairline cracks in one train image, each with a bbox of
+  roughly 12px wide × 110–220px tall (aspect ratio up to 1:18 —
+  unambiguously vertical), sat at different x-offsets across the frame.
+  The pooled cloud's centroid-to-centroid spread was wider than it was
+  tall, so pooled PCA reported the image as **"Horizontal"** — the exact
+  opposite of what every individual crack in it looks like.
+- A bent, L-shaped crack (one long horizontal fragment, one long vertical
+  fragment meeting at a corner) got blended by pooled PCA into a
+  fictitious **"Diagonal"**, when a human — or a per-fragment agreement
+  check — would call it what it is: two roughly perpendicular segments,
+  i.e. `Mixed`.
+
+The per-fragment + circular-mean approach fixes both: each fragment's own
+shape determines its own angle (unaffected by where it sits in the
+frame), and fragments are only combined into one direction when they
+actually agree; when they don't, the label is `Mixed` rather than an
+average that no fragment actually has.
 
 This rule was validated by overlaying the computed principal axis on top of
 a random sample of images per class and confirming visually that the line
-tracks the crack's actual orientation, and by checking that the
-lowest-elongation-ratio images in the dataset are genuinely branching/blob
-cracks rather than simple curved single-direction ones.
+tracks each crack's actual orientation, and by checking that the
+lowest-agreement and lowest-elongation-ratio images in the dataset are
+genuinely bent/branching/blob cracks rather than simple curved
+single-direction ones.
 
 One image (`CRACK500_20160222_165218_641_721_jpg.rf.RAlbl8Jrf3mXEB8YGlQf.jpg`,
 in `train/`) has no COCO annotation despite actually containing a crack, so
@@ -89,21 +127,30 @@ untouched.
 
 - `<split>/_annotations.coco.json`: each entry in `images[]` gained
   `direction`, `direction_diagonal_type`, `direction_angle_deg`,
-  `direction_elongation_ratio`, and `direction_source` (`"pca"`,
-  `"manual"`, or `"negative"`) fields. Nothing else in the COCO file was
-  changed, so existing segmentation training pipelines keep working
-  unmodified — negative images simply carry no annotations, which is
-  COCO's native way of representing a background/negative example.
+  `direction_elongation_ratio`, `direction_fragment_agreement`, and
+  `direction_source` (`"pca"`, `"manual"`, or `"negative"`) fields.
+  Nothing else in the COCO file was changed, so existing segmentation
+  training pipelines keep working unmodified — negative images simply
+  carry no annotations, which is COCO's native way of representing a
+  background/negative example.
 - `<split>/_direction_labels.csv`: a flat `file_name → direction` table
-  (plus the angle/ratio/source metadata) for a classification dataloader
-  that doesn't need to parse COCO. Only crack-containing images appear
-  here.
+  (plus the angle/ratio/agreement/source metadata) for a classification
+  dataloader that doesn't need to parse COCO. Only crack-containing images
+  appear here.
 
 ## Class distribution (crack-containing images only)
 
+Recomputed with the per-fragment + circular-mean method described above
+(see "Why not just pool every vertex into one PCA (v1 bug)"). 99 of 870
+crack images (~11%) changed label versus the original pooled-PCA version
+— mostly out of a spurious `Diagonal` produced by blending fragments that
+don't actually agree in orientation, redistributed into `Mixed`,
+`Horizontal`, or `Vertical` once each fragment's own shape is measured on
+its own terms.
+
 | Split | Horizontal | Vertical | Diagonal | Mixed | Total |
 |---|---|---|---|---|---|
-| train | 202 | 188 | 161 | 56 | 607 |
-| valid | 54 | 60 | 49 | 11 | 174 |
-| test | 34 | 24 | 20 | 11 | 89 |
-| **all** | **290** | **272** | **230** | **78** | **870** |
+| train | 191 | 200 | 129 | 87 | 607 |
+| valid | 51 | 64 | 38 | 21 | 174 |
+| test | 31 | 25 | 16 | 17 | 89 |
+| **all** | **273** | **289** | **183** | **125** | **870** |
