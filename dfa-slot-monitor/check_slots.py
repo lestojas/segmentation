@@ -37,6 +37,10 @@ DEFAULT_AVAILABLE = (".datepicker td.day:not(.disabled):not(.old):not(.new), "
                      ".fc-day.available, .react-datepicker__day:not(.react-datepicker__day--disabled):not(.react-datepicker__day--outside-month), "
                      "td.available:not(.disabled):not(.unavailable), .day.available, [data-available='true']")
 
+# Exact dropdown labels on the DFA site: "DAVAO(SM CITY DAVAO)" and "TAGUM (ROBINSONS PLACE OF TAGUM".
+# Patterns anchor on the distinctive start so spacing / a missing ")" can't break the match.
+DEFAULT_SITES = r"Davao (SM City Davao)::^\s*DAVAO\s*\(\s*SM CITY,Tagum (Robinsons Place Tagum)::^\s*TAGUM\s*\(\s*ROBINSONS"
+
 CHROME_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
@@ -61,6 +65,15 @@ def log(msg):
 
 def csv(name, default):
     return [x.strip() for x in os.environ.get(name, default).split(",") if x.strip()]
+
+
+def parse_sites(raw):
+    """'Label::regex,Label2::regex2' or plain regexes -> [(label, regex)]."""
+    out = []
+    for entry in [x.strip() for x in raw.split(",") if x.strip()]:
+        label, _, pat = entry.partition("::")
+        out.append((label.strip(), pat.strip()) if pat else (entry, entry))
+    return out
 
 
 def load_state():
@@ -235,8 +248,8 @@ def available_days(page, cfg):
 
 def scan(page, cfg):
     found = []
-    for site in cfg["sites"]:
-        to_calendar(page, cfg, site)
+    for site, pattern in cfg["sites"]:
+        to_calendar(page, cfg, pattern)
         for month in cfg["months"]:
             if not goto_month(page, cfg, month):
                 log(f"{site}: {month} not shown in calendar (not released yet?)")
@@ -253,7 +266,7 @@ def scan(page, cfg):
 def make_cfg():
     return {
         "start_url": os.environ.get("START_URL", "https://www.passport.gov.ph/appointment"),
-        "sites": csv("SITES", "Davao,Tagum"),
+        "sites": parse_sites(os.environ.get("SITES", DEFAULT_SITES)),
         "months": csv("MONTHS", "October,November,December"),
         "year": os.environ.get("YEAR", "").strip(),
         "next_text": os.environ.get("NEXT_BUTTON_TEXT", r"^(next|continue|proceed|submit|agree|accept)\b"),

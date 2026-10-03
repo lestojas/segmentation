@@ -6,7 +6,7 @@
   <button id="n1" disabled>Next</button>
 </div>
 <div id="step2" style="display:none">
-  <select id="site"><option>-- choose --</option><option>Manila</option><option>DFA Davao</option><option>DFA Tagum</option></select>
+  <select id="site"><option>-- choose --</option><option>MANILA (ROBINSONS PLACE MANILA)</option><option>DAVAO DE ORO (CITY HALL)</option><option>DAVAO(SM CITY DAVAO)</option><option>TAGUM (ROBINSONS PLACE OF TAGUM</option></select>
   <button id="n2">Next</button>
 </div>
 <div id="step3" style="display:none">
@@ -16,13 +16,13 @@
 <script>
 const months=["September","October","November","December"];
 // open dates per site per month; Tagum has some in November
-const open={"DFA Davao":{},"DFA Tagum":{"November":[12,13]}};
-if (location.hash.includes("davao")) open["DFA Davao"]={"December":[22]};
+const open={"DAVAO(SM CITY DAVAO)":{},"TAGUM (ROBINSONS PLACE OF TAGUM":{"November":[12,13]}};
+if (location.hash.includes("davao")) open["DAVAO(SM CITY DAVAO)"]={"December":[22]};
 let m=0;
 document.getElementById("agree").onchange=e=>document.getElementById("n1").disabled=!e.target.checked;
 document.getElementById("n1").onclick=()=>{step1.style.display="none";step2.style.display="block"};
 document.getElementById("n2").onclick=()=>{
-  if(!site.value.startsWith("DFA"))return; step2.style.display="none";step3.style.display="block";draw()};
+  if(!(site.value.startsWith("DAVAO(")||site.value.startsWith("TAGUM")))return; step2.style.display="none";step3.style.display="block";draw()};
 function draw(){
   label.textContent=months[m]+" 2026";
   const o=(open[site.value]||{})[months[m]]||[]; let h="<tr>";
