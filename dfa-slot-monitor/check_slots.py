@@ -119,14 +119,18 @@ def select_site(page, site):
         progressed = False
         for sel in page.locator("select:visible").all():
             opts = sel.locator("option").all_inner_texts()
-            for idx, text in enumerate(opts):
-                if rx.search(text):
-                    if not sel.evaluate("(el, i) => el.selectedIndex === i", idx):
-                        sel.select_option(index=idx)
-                        page.wait_for_timeout(700)
-                        progressed = True
-                    chosen = True
-                    break
+            hits = [(i, t.strip()) for i, t in enumerate(opts) if rx.search(t)]
+            if len(hits) > 1:
+                log(f"WARNING: '{site}' matches {len(hits)} options {[t for _, t in hits]}; using the first. "
+                    f"Make SITES more specific (run --list-sites to see exact names)")
+            if hits:
+                idx, text = hits[0]
+                if not sel.evaluate("(el, i) => el.selectedIndex === i", idx):
+                    sel.select_option(index=idx)
+                    log(f"selected site option: '{text}' (pattern '{site}')")
+                    page.wait_for_timeout(700)
+                    progressed = True
+                chosen = True
         if not progressed:
             break
     if chosen:
@@ -164,6 +168,39 @@ def to_calendar(page, cfg, site):
             page.wait_for_timeout(1000)
     raise RuntimeError(f"could not reach the calendar for site '{site}' "
                        f"(site found: {site_done}). See debug/ screenshot, then adjust .env selectors")
+
+
+def list_sites(headed=False):
+    """Walk the wizard and print every dropdown option / selectable text so SITES can be set to real names."""
+    cfg = make_cfg()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=not headed)
+        page = browser.new_context(user_agent=CHROME_UA, locale="en-PH", timezone_id="Asia/Manila").new_page()
+        page.set_default_timeout(30000)
+        page.goto(cfg["start_url"], wait_until="domcontentloaded")
+        seen = False
+        for _ in range(10):
+            selects = page.locator("select:visible").all()
+            for n, sel in enumerate(selects, 1):
+                opts = [o.strip() for o in sel.locator("option").all_inner_texts() if o.strip()]
+                print(f"\nDropdown #{n} ({len(opts)} options):")
+                for o in opts:
+                    print(f"   - {o}")
+                seen = True
+            if seen:
+                break
+            if not click_next(page, cfg["next_text"]):
+                page.wait_for_timeout(1000)
+        if not seen:
+            save_debug(page, "list-sites")
+            print("No dropdown found. Saved a screenshot/HTML to debug/. Sites may be radio buttons or a map; "
+                  "open debug/*.png to read the names.")
+        else:
+            print("\nCopy the exact names you want into SITES= in .env (comma-separated; each entry is a "
+                  "case-insensitive regex, e.g. SITES=DFA Davao \\(SM City,DFA Tagum).")
+            print("NOTE: dropdowns may cascade (region > province > site); if you only see regions, pick one in "
+                  "--headed mode and read the next list, or run with --headed and watch.")
+        browser.close()
 
 
 def month_label(page, cfg):
@@ -283,8 +320,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--test-notify", action="store_true")
     ap.add_argument("--headed", action="store_true")
+    ap.add_argument("--list-sites", action="store_true", help="print the real site names shown on the DFA site")
     args = ap.parse_args()
     load_env()
+    if args.list_sites:
+        list_sites(headed=args.headed)
+        return 0
     if args.test_notify:
         ok = notify.send_all("DFA monitor test", "If you can read this, notifications work.")
         print("Delivered via:", ok or "NOTHING (check .env)")

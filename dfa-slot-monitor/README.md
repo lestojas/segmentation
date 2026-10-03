@@ -22,9 +22,10 @@ The installer creates a Python environment, installs the browser, opens `.env` f
 
 The DFA site could not be reached while this was built, so the calendar selectors are auto-detecting guesses, verified only against a local fake booking page (`tests/fake_site.html`). Do this once:
 
+0. **Find the real site names first:** `.venv/bin/python check_slots.py --list-sites` prints every option the DFA site shows. Put the exact names for Davao and Tagum in `SITES=` in `.env` (each entry is a case-insensitive regex). The default `Davao,Tagum` is only a guess and may match the wrong entry (the log prints which option was selected and warns if several match).
 1. `.venv/bin/python check_slots.py --headed` and watch it. It should accept the terms, pick the site, and reach the calendar.
 2. If it fails, look in `debug/` (screenshot + HTML saved on every failure). Then set `SEL_MONTH_LABEL`, `SEL_MONTH_NEXT`, `SEL_AVAILABLE_DAY` in `.env` (CSS selectors; find them with right-click > Inspect in Chrome, or run `.venv/bin/playwright codegen <START_URL>`).
-3. Site names are matched by text (`SITES=Davao,Tagum`). If DFA lists them differently, change them to a word in the dropdown.
+3. Check `logs/monitor.log` for `selected site option: '...'` and confirm it is the Davao / Tagum office you want.
 4. Sanity check: confirm a date you can see as open in your normal browser is reported as open (`logs/monitor.log` shows "N open date(s)").
 
 If DFA shows a CAPTCHA or Cloudflare challenge, the checker will fail and tell you; it deliberately does not try to bypass those.
