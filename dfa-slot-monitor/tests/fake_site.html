@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- Local stand-in for a booking wizard: terms -> Next -> site dropdown -> Next -> calendar. Test use only. -->
+<html><body>
+<div id="step1">
+  <label><input type="checkbox" id="agree"> I agree to the terms</label>
+  <button id="n1" disabled>Next</button>
+</div>
+<div id="step2" style="display:none">
+  <select id="site"><option>-- choose --</option><option>Manila</option><option>DFA Davao</option><option>DFA Tagum</option></select>
+  <button id="n2">Next</button>
+</div>
+<div id="step3" style="display:none">
+  <div class="datepicker"><span class="datepicker-switch" id="label"></span><span class="next" id="nextm">&gt;</span>
+  <table><tbody id="days"></tbody></table></div>
+</div>
+<script>
+const months=["September","October","November","December"];
+// open dates per site per month; Tagum has some in November
+const open={"DFA Davao":{},"DFA Tagum":{"November":[12,13]}};
+if (location.hash.includes("davao")) open["DFA Davao"]={"December":[22]};
+let m=0;
+document.getElementById("agree").onchange=e=>document.getElementById("n1").disabled=!e.target.checked;
+document.getElementById("n1").onclick=()=>{step1.style.display="none";step2.style.display="block"};
+document.getElementById("n2").onclick=()=>{
+  if(!site.value.startsWith("DFA"))return; step2.style.display="none";step3.style.display="block";draw()};
+function draw(){
+  label.textContent=months[m]+" 2026";
+  const o=(open[site.value]||{})[months[m]]||[]; let h="<tr>";
+  for(let d=1;d<=30;d++){h+=`<td class="day ${o.includes(d)?"":"disabled"}">${d}</td>`; if(d%7==0)h+="</tr><tr>"}
+  days.innerHTML=h+"</tr>";
+}
+nextm.onclick=()=>{if(m<months.length-1){m++;draw()}};
+</script></body></html>
