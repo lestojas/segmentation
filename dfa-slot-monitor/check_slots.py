@@ -37,8 +37,8 @@ DEFAULT_AVAILABLE = (".datepicker td.day:not(.disabled):not(.old):not(.new), "
                      ".fc-day.available, .react-datepicker__day:not(.react-datepicker__day--disabled):not(.react-datepicker__day--outside-month), "
                      "td.available:not(.disabled):not(.unavailable), .day.available, [data-available='true']")
 
-# Exact dropdown labels on the DFA site: "DAVAO(SM CITY DAVAO)" and "TAGUM (ROBINSONS PLACE OF TAGUM".
-# Patterns anchor on the distinctive start so spacing / a missing ")" can't break the match.
+# Exact dropdown labels on the DFA site: "DAVAO(SM CITY DAVAO)" and "TAGUM (ROBINSONS PLACE OF TAGUM)".
+# Patterns anchor on the distinctive start so spacing or small label tweaks can't break the match.
 DEFAULT_SITES = r"Davao (SM City Davao)::^\s*DAVAO\s*\(\s*SM CITY,Tagum (Robinsons Place Tagum)::^\s*TAGUM\s*\(\s*ROBINSONS"
 
 CHROME_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "

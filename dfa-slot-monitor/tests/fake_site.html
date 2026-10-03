@@ -6,7 +6,7 @@
   <button id="n1" disabled>Next</button>
 </div>
 <div id="step2" style="display:none">
-  <select id="site"><option>-- choose --</option><option>MANILA (ROBINSONS PLACE MANILA)</option><option>DAVAO DE ORO (CITY HALL)</option><option>DAVAO(SM CITY DAVAO)</option><option>TAGUM (ROBINSONS PLACE OF TAGUM</option></select>
+  <select id="site"><option>-- choose --</option><option>MANILA (ROBINSONS PLACE MANILA)</option><option>DAVAO DE ORO (CITY HALL)</option><option>DAVAO(SM CITY DAVAO)</option><option>TAGUM (ROBINSONS PLACE OF TAGUM)</option></select>
   <button id="n2">Next</button>
 </div>
 <div id="step3" style="display:none">
@@ -16,7 +16,7 @@
 <script>
 const months=["September","October","November","December"];
 // open dates per site per month; Tagum has some in November
-const open={"DAVAO(SM CITY DAVAO)":{},"TAGUM (ROBINSONS PLACE OF TAGUM":{"November":[12,13]}};
+const open={"DAVAO(SM CITY DAVAO)":{},"TAGUM (ROBINSONS PLACE OF TAGUM)":{"November":[12,13]}};
 if (location.hash.includes("davao")) open["DAVAO(SM CITY DAVAO)"]={"December":[22]};
 let m=0;
 document.getElementById("agree").onchange=e=>document.getElementById("n1").disabled=!e.target.checked;
